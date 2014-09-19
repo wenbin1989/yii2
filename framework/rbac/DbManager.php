@@ -58,7 +58,14 @@ class DbManager extends BaseManager
      * @var string the name of the table storing rules. Defaults to "auth_rule".
      */
     public $ruleTable = '{{%auth_rule}}';
+    /**
+     * @var boolean whether to allow caching the rbac items and rule when calling [[getItem]] and [[getRule]] method,
+     * to avoid select db every time.
+     */
+    public $allowCaching = false;
 
+    private $_items = [];
+    private $_rules = [];
 
     /**
      * Initializes the application component.
@@ -126,6 +133,10 @@ class DbManager extends BaseManager
      */
     protected function getItem($name)
     {
+        if ($this->allowCaching && isset($this->_items[$name])) {
+            return $this->_items[$name];
+        }
+
         $row = (new Query)->from($this->itemTable)
             ->where(['name' => $name])
             ->one($this->db);
@@ -138,7 +149,12 @@ class DbManager extends BaseManager
             $row['data'] = null;
         }
 
-        return $this->populateItem($row);
+        $item  = $this->populateItem($row);
+        if ($this->allowCaching) {
+            $this->_items[$name] = $item;
+        }
+
+        return $item;
     }
 
     /**
@@ -182,6 +198,8 @@ class DbManager extends BaseManager
      */
     protected function removeItem($item)
     {
+        unset($this->_items[$item->name]);
+
         if (!$this->supportsCascadeUpdate()) {
             $this->db->createCommand()
                 ->delete($this->itemChildTable, ['or', '[[parent]]=:name', '[[child]]=:name'], [':name' => $item->name])
@@ -203,6 +221,8 @@ class DbManager extends BaseManager
      */
     protected function updateItem($name, $item)
     {
+        unset($this->_items[$item->name]);
+
         if (!$this->supportsCascadeUpdate() && $item->name !== $name) {
             $this->db->createCommand()
                 ->update($this->itemChildTable, ['parent' => $item->name], ['parent' => $name])
@@ -259,6 +279,8 @@ class DbManager extends BaseManager
      */
     protected function updateRule($name, $rule)
     {
+        unset($this->_rules[$rule->name]);
+
         if (!$this->supportsCascadeUpdate() && $rule->name !== $name) {
             $this->db->createCommand()
                 ->update($this->itemTable, ['rule_name' => $rule->name], ['rule_name' => $name])
@@ -284,6 +306,8 @@ class DbManager extends BaseManager
      */
     protected function removeRule($rule)
     {
+        unset($this->_rules[$rule->name]);
+
         if (!$this->supportsCascadeUpdate()) {
             $this->db->createCommand()
                 ->update($this->itemTable, ['rule_name' => null], ['rule_name' => $rule->name])
@@ -451,11 +475,19 @@ class DbManager extends BaseManager
      */
     public function getRule($name)
     {
+        if ($this->allowCaching && isset($this->_rules[$name])) {
+            return $this->_rules[$name];
+        }
+
         $row = (new Query)->select(['data'])
             ->from($this->ruleTable)
             ->where(['name' => $name])
             ->one($this->db);
-        return $row === false ? null : unserialize($row['data']);
+        $rule = $row === false ? null : unserialize($row['data']);
+        if ($this->allowCaching && $rule !== null) {
+            $this->_rules[$name] = $rule;
+        }
+        return $rule;
     }
 
     /**
@@ -668,6 +700,9 @@ class DbManager extends BaseManager
      */
     public function removeAll()
     {
+        $this->_items = [];
+        $this->_rules = [];
+
         $this->removeAllAssignments();
         $this->db->createCommand()->delete($this->itemChildTable)->execute();
         $this->db->createCommand()->delete($this->itemTable)->execute();
@@ -696,6 +731,8 @@ class DbManager extends BaseManager
      */
     protected function removeAllItems($type)
     {
+        $this->_items = [];
+
         if (!$this->supportsCascadeUpdate()) {
             $names = (new Query)
                 ->select(['name'])
@@ -723,6 +760,8 @@ class DbManager extends BaseManager
      */
     public function removeAllRules()
     {
+        $this->_rules = [];
+
         if (!$this->supportsCascadeUpdate()) {
             $this->db->createCommand()
                 ->update($this->itemTable, ['ruleName' => null])
